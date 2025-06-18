@@ -1,0 +1,15 @@
+2025-06-17 23:12:49 - [0;34mStarting optimized Huly deployment...[0m
+2025-06-17 23:12:49 - [1;33mChecking prerequisites...[0m
+2025-06-17 23:12:49 - [0;32mPrerequisites check passed[0m
+2025-06-17 23:12:49 - [1;33mValidating resource allocation...[0m
+2025-06-17 23:12:49 - Total allocated memory: 8960MB
+2025-06-17 23:12:49 - Available system memory: 7941MB
+2025-06-17 23:12:49 - Memory utilization: 112%
+2025-06-17 23:12:49 - [1;33mWARNING: High memory allocation (112%). Monitor closely.[0m
+2025-06-17 23:12:49 - [1;33mCreating backup...[0m
+2025-06-17 23:12:49 - Backed up compose.yml
+2025-06-17 23:12:50 - Saved volume information
+2025-06-17 23:12:50 - [0;32mBackup created in backups/20250617_231249[0m
+2025-06-17 23:12:50 - [1;33mDeploying optimized services...[0m
+2025-06-17 23:12:50 - Stopping existing services...
+2025-06-17 23:12:50 - Starting optimized services...

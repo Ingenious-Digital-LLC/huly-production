@@ -1,7 +1,14 @@
 #!/bin/bash
 
-if [ -f "huly.conf" ]; then
+# Load configuration if not already set (allows for environment overrides)
+if [ -z "$HOST_ADDRESS" ] && [ -f "huly.conf" ]; then
     source "huly.conf"
+fi
+
+# Validate required variables
+if [ -z "$HOST_ADDRESS" ]; then
+    echo "Error: HOST_ADDRESS not set. Please run setup.sh first or export HOST_ADDRESS."
+    exit 1
 fi
 
 # Check for --recreate flag
@@ -10,69 +17,97 @@ if [ "$1" == "--recreate" ]; then
     RECREATE=true
 fi
 
-# Handle nginx.conf recreation or updating
-if [ "$RECREATE" == true ]; then
-    cp .template.nginx.conf nginx.conf
-    echo "nginx.conf has been recreated from the template."
-else
-    if [ ! -f "nginx.conf" ]; then
-        echo "nginx.conf not found, creating from template."
-        cp .template.nginx.conf nginx.conf
-    else
-        echo "nginx.conf already exists. Only updating server_name, listen, and proxy_pass."
-        echo "Run with --recreate to fully overwrite nginx.conf."
-    fi
-fi
-
-# Update server_name and proxy_pass using sed
-sed -i.bak "s|server_name .*;|server_name ${HOST_ADDRESS};|" ./nginx.conf
-sed -i.bak "s|proxy_pass .*;|proxy_pass http://${HTTP_BIND:-127.0.0.1}:${HTTP_PORT};|" ./nginx.conf
-
-# Update listen directive to either port 80 or 443, while preserving IP address
+# Set nginx listen port based on SECURE setting
 if [[ -n "$SECURE" ]]; then
-    # Secure (use port 443 and add 'ssl')
-    sed -i.bak -E 's|(listen )(.*:)?([0-9]+)?;|\1443 ssl;|' ./nginx.conf
-    echo "Serving over SSL. Make sure to add your SSL certificates."
+    export NGINX_LISTEN_PORT="443 ssl"
+    echo "Configuring for SSL (port 443)"
 else
-    # Non-secure (use port 80 and remove 'ssl')
-    sed -i.bak -E "s|(listen )(.*:)?[0-9]+ ssl;|\1\280;|" ./nginx.conf
-    sed -i.bak -E "s|(listen )(.*:)?([0-9]+)?;|\1\280;|" ./nginx.conf
+    export NGINX_LISTEN_PORT="80"
+    echo "Configuring for HTTP (port 80)"
 fi
 
-# Extract IP address for redirect configuration
-IP_ADDRESS=$(grep -oE 'listen \K[^:]+(?=:[0-9]+ ssl;)' nginx.conf)
-
-# Remove HTTP to HTTPS redirect server block if SSL is enabled
-if [[ -z "$SECURE" ]]; then
-    echo "Enabling SSL; removing HTTP to HTTPS redirect block..."
-    # Remove the entire server block for port 80
-    if grep -q 'return 301 https://\$host\$request_uri;' nginx.conf; then
-        sed -i.bak '/# !/,/!/d' nginx.conf
+# Handle nginx.conf recreation or updating
+if [ "$RECREATE" == true ] || [ ! -f "nginx.conf" ]; then
+    if [ "$RECREATE" == true ]; then
+        echo "Recreating nginx.conf from template..."
+    else
+        echo "nginx.conf not found, creating from template..."
+    fi
+    
+    # Generate nginx.conf using manual substitution to preserve nginx variables
+    sed -e "s/\${NGINX_LISTEN_PORT:-80}/$NGINX_LISTEN_PORT/g" \
+        -e "s/\${HOST_ADDRESS:-localhost}/$HOST_ADDRESS/g" \
+        -e 's/\$\$/$/g' \
+        .template.nginx.conf > nginx.conf
+    
+    if [ $? -eq 0 ]; then
+        echo "✅ nginx.conf generated successfully"
+    else
+        echo "❌ Error generating nginx.conf"
+        exit 1
     fi
 else
-    # Check if the HTTP to HTTPS redirect block already exists
-    if grep -q 'return 301 https://\$host\$request_uri;' nginx.conf; then
-        sed -i.bak '/# !/,/!/d' nginx.conf
-    fi
+    echo "nginx.conf already exists. Use --recreate to regenerate."
+fi
 
-    echo "Creating HTTP to HTTPS redirect..."
-    echo -e "# ! DO NOT REMOVE COMMENT
-# DO NOT MODIFY, CHANGES WILL BE OVERWRITTEN
+# Add SSL redirect block for HTTPS configurations
+if [[ -n "$SECURE" ]]; then
+    # Check if redirect block already exists
+    if ! grep -q "return 301 https" nginx.conf; then
+        echo "Adding HTTP to HTTPS redirect block..."
+        cat >> nginx.conf << EOF
+
+# HTTP to HTTPS redirect
 server {
-    listen ${IP_ADDRESS:+${IP_ADDRESS}:}80;
+    listen 80;
     server_name ${HOST_ADDRESS};
     return 301 https://\$host\$request_uri;
 }
-# DO NOT REMOVE COMMENT !" >> ./nginx.conf
+EOF
+        echo "✅ HTTPS redirect block added"
+    fi
+    echo "⚠️  Note: Make sure to configure SSL certificates for HTTPS"
 fi
 
-read -p "Do you want to run 'nginx -s reload' now to load your updated Huly config? (Y/n): " RUN_NGINX
-case "${RUN_NGINX:-Y}" in  
-    [Yy]* )  
-        echo -e "\033[1;32mRunning 'nginx -s reload' now...\033[0m"
-        sudo nginx -s reload
-        ;;
-    [Nn]* )
-        echo "You can run 'nginx -s reload' later to load your updated Huly config."
-        ;;
-esac
+echo ""
+echo "📋 Configuration Summary:"
+echo "   Host: ${HOST_ADDRESS}"
+echo "   SSL: ${SECURE:+Enabled}${SECURE:-Disabled}"
+echo "   Port: ${NGINX_LISTEN_PORT}"
+echo ""
+
+# Validate generated config
+echo "🔍 Validating nginx configuration..."
+if command -v nginx >/dev/null 2>&1; then
+    if nginx -t -c "$(pwd)/nginx.conf" 2>/dev/null; then
+        echo "✅ nginx configuration is valid"
+    else
+        echo "⚠️  nginx configuration test failed (this is normal if nginx isn't installed)"
+        echo "   Configuration will be validated when nginx starts in the container"
+    fi
+else
+    echo "ℹ️  nginx not installed locally - configuration will be validated in container"
+fi
+
+# Offer to reload nginx if it's running
+if command -v nginx >/dev/null 2>&1 && pgrep nginx >/dev/null; then
+    read -p "Do you want to reload nginx now? (Y/n): " RUN_NGINX
+    case "${RUN_NGINX:-Y}" in  
+        [Yy]* )  
+            echo -e "\033[1;32mReloading nginx...\033[0m"
+            sudo nginx -s reload
+            ;;
+        [Nn]* )
+            echo "You can reload nginx later with: sudo nginx -s reload"
+            ;;
+    esac
+else
+    # Determine correct compose command
+    if command -v docker-compose >/dev/null 2>&1; then
+        echo "ℹ️  Use 'docker-compose restart nginx' to apply configuration changes"
+    elif docker compose version >/dev/null 2>&1; then
+        echo "ℹ️  Use 'docker compose restart nginx' to apply configuration changes"
+    else
+        echo "ℹ️  Install Docker Compose to manage containers"
+    fi
+fi

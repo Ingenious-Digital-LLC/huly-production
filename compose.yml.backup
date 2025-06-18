@@ -1,76 +1,50 @@
 name: ${DOCKER_NAME}
+version: "3"
 services:
   nginx:
     image: "nginx:1.21.3"
     ports:
       - "${HTTP_BIND}:${HTTP_PORT}:80"
     volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf
-    restart: unless-stopped
-    depends_on:
-      front:
-        condition: service_started
-      account:
-        condition: service_started
-      collaborator:
-        condition: service_started
-      transactor:
-        condition: service_started
-      rekoni:
-        condition: service_started
-      stats:
-        condition: service_started
+      - ./.huly.nginx:/etc/nginx/conf.d/default.conf
     deploy:
       resources:
         limits:
           memory: 256M
-          cpus: '0.5'
+          cpus: '0.2'
         reservations:
-          memory: 128M
-          cpus: '0.25'
+          memory: 64M
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:80/nginx-health || exit 1"]
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+      start_period: 10s
+    restart: unless-stopped
 
   mongodb:
     image: "mongo:7-jammy"
     environment:
       - PUID=1000
       - PGID=1000
-      - MONGO_INITDB_ROOT_USERNAME=admin
-      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD:-hulypassword}
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_USERNAME}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD}
     volumes:
       - db:/data/db
-      - ./mongodb.conf:/etc/mongod.conf.orig
-    restart: unless-stopped
     deploy:
       resources:
         limits:
           memory: 2G
-          cpus: '1.5'
+          cpus: '1.0'
         reservations:
-          memory: 1G
-          cpus: '0.5'
+          memory: 512M
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 30s
       timeout: 10s
-      retries: 5
+      retries: 3
       start_period: 40s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-    command: mongod --auth
+    restart: unless-stopped
 
   minio:
     image: "minio/minio"
@@ -80,26 +54,20 @@ services:
       - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY}
     volumes:
       - files:/data
-    restart: unless-stopped
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 1G
           cpus: '0.5'
         reservations:
           memory: 256M
-          cpus: '0.25'
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
-      timeout: 20s
+      timeout: 10s
       retries: 3
-      start_period: 40s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+      start_period: 10s
+    restart: unless-stopped
 
   elastic:
     image: "elasticsearch:7.14.2"
@@ -112,15 +80,13 @@ services:
       - ELASTICSEARCH_PORT_NUMBER=9200
       - BITNAMI_DEBUG=false
       - discovery.type=single-node
-      - ES_JAVA_OPTS=-Xms512m -Xmx1536m
+      - ES_JAVA_OPTS=-Xms1024m -Xmx1024m
       - http.cors.enabled=true
       - http.cors.allow-origin=http://localhost:8082
-      - bootstrap.memory_lock=true
-      - cluster.routing.allocation.disk.threshold_enabled=false
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
+      - xpack.security.enabled=false
+      - xpack.monitoring.enabled=false
+      - xpack.watcher.enabled=false
+      - xpack.ml.enabled=false
     deploy:
       resources:
         limits:
@@ -128,45 +94,21 @@ services:
           cpus: '1.0'
         reservations:
           memory: 1G
-          cpus: '0.5'
     healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -vq '\"status\":\"red\"'"]
-      interval: 30s
-      timeout: 10s
+      interval: 20s
       retries: 10
-      start_period: 60s
+      test: curl -s http://localhost:9200/_cluster/health | grep -vq '"status":"red"'
     restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
   rekoni:
     image: hardcoreeng/rekoni-service:${HULY_VERSION}
     environment:
       - SECRET=${SECRET}
-      - PORT=4004
     deploy:
       resources:
         limits:
-          memory: 512M
-          cpus: '0.5'
-        reservations:
-          memory: 256M
-          cpus: '0.25'
-    healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:4004/ || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+          memory: 500M
     restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
   transactor:
     image: hardcoreeng/transactor:${HULY_VERSION}
@@ -182,31 +124,20 @@ services:
       - FULLTEXT_URL=http://fulltext:4700
       - STATS_URL=http://stats:4900
       - LAST_NAME_FIRST=${LAST_NAME_FIRST:-true}
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
     deploy:
       resources:
         limits:
-          memory: 768M
-          cpus: '1.0'
-        reservations:
-          memory: 384M
+          memory: 1G
           cpus: '0.5'
+        reservations:
+          memory: 256M
     healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:3333/ || exit 1"]
+      test: ["CMD", "curl", "-f", "http://localhost:3333/api/v1/ping"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 30s
     restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
   collaborator:
     image: hardcoreeng/collaborator:${HULY_VERSION}
@@ -217,31 +148,20 @@ services:
       - DB_URL=mongodb://${MONGO_USERNAME}:${MONGO_PASSWORD}@mongodb:27017/huly?authSource=admin
       - STATS_URL=http://stats:4900
       - STORAGE_CONFIG=minio|minio?accessKey=${MINIO_ACCESS_KEY}&secretKey=${MINIO_SECRET_KEY}
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      account:
-        condition: service_started
     deploy:
       resources:
         limits:
           memory: 512M
-          cpus: '0.5'
+          cpus: '0.3'
         reservations:
-          memory: 256M
-          cpus: '0.25'
+          memory: 128M
     healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:3078/ || exit 1"]
+      test: ["CMD", "curl", "-f", "http://localhost:3078/api/v1/ping"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 20s
     restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
   account:
     image: hardcoreeng/account:${HULY_VERSION}
@@ -257,31 +177,20 @@ services:
       - MODEL_ENABLED=*
       - ACCOUNTS_URL=http://localhost:3000
       - ACCOUNT_PORT=3000
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
     deploy:
       resources:
         limits:
           memory: 512M
-          cpus: '0.5'
+          cpus: '0.3'
         reservations:
-          memory: 256M
-          cpus: '0.25'
+          memory: 128M
     healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:3000/ || exit 1"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/v1/ping"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 20s
     restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
   workspace:
     image: hardcoreeng/workspace:${HULY_VERSION}
@@ -294,38 +203,23 @@ services:
       - MODEL_ENABLED=*
       - ACCOUNTS_URL=http://account:3000
       - STATS_URL=http://stats:4900
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      account:
-        condition: service_started
-      transactor:
-        condition: service_started
     deploy:
       resources:
         limits:
           memory: 512M
-          cpus: '0.5'
+          cpus: '0.3'
         reservations:
-          memory: 256M
-          cpus: '0.25'
+          memory: 128M
     healthcheck:
-      test: ["CMD-SHELL", "ps aux | grep node | grep -v grep || exit 1"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/ping"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 20s
     restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
   front:
     image: hardcoreeng/front:${HULY_VERSION}
-    ports:
-      - "8087:8080"
     environment:
       - SERVER_PORT=8080
       - SERVER_SECRET=${SECRET}
@@ -346,39 +240,25 @@ services:
       - DEFAULT_LANGUAGE=${DEFAULT_LANGUAGE:-en}
       - LAST_NAME_FIRST=${LAST_NAME_FIRST:-true}
       - DESKTOP_UPDATES_CHANNEL=selfhost
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      elastic:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 1G
           cpus: '0.5'
         reservations:
           memory: 256M
-          cpus: '0.25'
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 30s
     restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
   fulltext:
     image: hardcoreeng/fulltext:${HULY_VERSION}
     environment:
       - SERVER_SECRET=${SECRET}
-      - PORT=4700
       - DB_URL=mongodb://${MONGO_USERNAME}:${MONGO_PASSWORD}@mongodb:27017/huly?authSource=admin
       - FULLTEXT_DB_URL=http://elastic:9200
       - ELASTIC_INDEX_NAME=huly_storage_index
@@ -386,33 +266,20 @@ services:
       - REKONI_URL=http://rekoni:4004
       - ACCOUNTS_URL=http://account:3000
       - STATS_URL=http://stats:4900
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      elastic:
-        condition: service_healthy
-      rekoni:
-        condition: service_started
     deploy:
       resources:
         limits:
           memory: 512M
-          cpus: '0.5'
+          cpus: '0.3'
         reservations:
-          memory: 256M
-          cpus: '0.25'
+          memory: 128M
     healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:4700/ || exit 1"]
+      test: ["CMD", "curl", "-f", "http://localhost:4700/api/v1/ping"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 20s
     restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
   stats:
     image: hardcoreeng/stats:${HULY_VERSION}
@@ -423,23 +290,16 @@ services:
       resources:
         limits:
           memory: 256M
-          cpus: '0.25'
+          cpus: '0.2'
         reservations:
-          memory: 128M
-          cpus: '0.1'
+          memory: 64M
     healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:4900/ || exit 1"]
+      test: ["CMD", "curl", "-f", "http://localhost:4900/api/v1/ping"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 20s
     restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
 volumes:
   db:
   elastic:

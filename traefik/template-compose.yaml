@@ -1,9 +1,9 @@
 x-common-env: &common-env
   SERVER_SECRET: ${HULY_SECRET}
   SECRET: ${HULY_SECRET}
-  STORAGE_CONFIG: minio|minio?accessKey=minioadmin&secretKey=minioadmin
-  MONGO_URL: mongodb://mongodb:27017
-  DB_URL: mongodb://mongodb:27017
+  STORAGE_CONFIG: minio|minio?accessKey=${MINIO_ACCESS_KEY}&secretKey=${MINIO_SECRET_KEY}
+  MONGO_URL: mongodb://${MONGO_USERNAME}:${MONGO_PASSWORD}@mongodb:27017/huly?authSource=admin
+  DB_URL: mongodb://${MONGO_USERNAME}:${MONGO_PASSWORD}@mongodb:27017/huly?authSource=admin
   ACCOUNTS_URL: http://account:3000
   STATS_URL: http://stats:4900
 

@@ -1,0 +1,4 @@
+DRIVER    VOLUME NAME
+local     huly_db
+local     huly_elastic
+local     huly_files

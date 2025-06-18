@@ -1,0 +1,10 @@
+name: huly-nginx-test
+version: "3.8"
+services:
+  nginx:
+    image: "nginx:1.21.3"
+    ports:
+      - "8090:80"
+    volumes:
+      - ./nginx-test.conf:/etc/nginx/conf.d/default.conf
+    restart: unless-stopped
